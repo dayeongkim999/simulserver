@@ -1,87 +1,39 @@
-from fastapi import APIRouter
-from services.turn_caculator import TurnCalculator
-from errors.exceptions import TurnCalculationException, InvalidGameStateException
-from models.turn_models import TurnStartRequest, TurnStartResponse
+from fastapi import APIRouter, HTTPException
+from models.turn_models import (
+    TurnStartRequest, 
+    TurnStartResponse,
+    TurnEndRequest,
+    TurnEndResponse
+)
+from services.turn_calculator import calculate_turn_start, calculate_turn_end
 
-router = APIRouter()
-
-calculator = TurnCalculator()
-
-@router.get("/test_random")
-async def test_random():
-    """랜덤 함수 테스트용 엔드포인트"""
-    random_value = TurnCalculator.test()
-    return {"random_value": random_value}
+router = APIRouter(
+    prefix="/turn",
+    tags=["turn"]
+)
 
 @router.post("/start", response_model=TurnStartResponse)
 async def start_turn(request: TurnStartRequest):
     """
-    턴 시작 - 주식 가격 계산
-    
-    Spring 서버로부터 게임 상태를 받아서:
-    1. 각 주식의 가격 변동 계산
-    2. 뉴스/이벤트 영향 반영
-    3. 시장 전반 트렌드 분석
-    4. 계산 결과 반환
-    
-    Raises:
-        TurnCalculationException: 턴 계산 실패 시
-        InvalidGameStateException: 유효하지 않은 게임 상태
+    턴 시작: 현재 주가와 이벤트/뉴스를 기반으로 다음 턴의 변동된 주가를 계산하여 반환합니다.
     """
-    # 기본 검증
-    if not request.stocks:
-        raise InvalidGameStateException("No stocks provided")
-    
-    if request.turn_num < 1:
-        raise InvalidGameStateException("Turn number must be positive")
-    
-    # 계산 실행 - 예외 발생 시 에러 핸들러가 자동 처리
     try:
-        result = calculator.calculate_turn(request)
+        result = calculate_turn_start(request)
         return result
-    except (ValueError, ZeroDivisionError, KeyError):
-        # 이런 에러들은 그냥 다시 raise하면 handlers.py가 알아서 처리
-        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # 예상치 못한 에러는 TurnCalculationException으로 변환
-        raise TurnCalculationException(
-            turn_num=request.turn_num,
-            reason=str(e)
-        )
+        raise HTTPException(status_code=500, detail="Internal Server Error during turn start calculation.")
 
-
-@router.post("/preview")
-async def preview_turn(request: TurnStartRequest):
+@router.post("/end", response_model=TurnEndResponse)
+async def end_turn(request: TurnEndRequest):
     """
-    턴 미리보기 (테스트용)
-    실제 계산은 하지만 저장하지 않음
-    
-    에러 발생 시에도 자동으로 핸들러가 처리
+    턴 종료: 유저의 매수/매도 액션을 바탕으로 현금과 포트폴리오를 정산하여 반환합니다.
     """
-    # 검증
-    if not request.stocks:
-        raise InvalidGameStateException("No stocks provided for preview")
-    
     try:
-        result = calculator.calculate_turn(request)
-        return {
-            "success": True,
-            "preview": True,
-            "data": result.dict()
-        }
+        result = calculate_turn_end(request)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # 미리보기 실패도 TurnCalculationException으로 처리
-        raise TurnCalculationException(
-            turn_num=request.turn_num,
-            reason=f"Preview failed: {str(e)}"
-        )
-
-
-@router.get("/health")
-async def turn_health():
-    """턴 계산 서비스 헬스 체크"""
-    return {
-        "success": True,
-        "service": "turn_calculator",
-        "status": "healthy"
-    }
+        raise HTTPException(status_code=500, detail="Internal Server Error during turn end calculation.")
